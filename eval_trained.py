@@ -6,6 +6,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import auditkit as ak
+from auditkit.agent_eval import episodes_from_agenttune
 from generate_dataset import SYSTEM, gold_final_json
 
 DIR = Path(__file__).parent / "data"
@@ -37,18 +38,14 @@ def load(path):
     return tok, mdl
 
 
-def gen_batch(tok, mdl, texts, bs=16):
+def gen_batch(tok, mdl, texts, use_sys=False, bs=16):
     outs = []
     for i in range(0, len(texts), bs):
         chunk = texts[i : i + bs]
-        prompts = [
-            tok.apply_chat_template(
-                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": t}],
-                add_generation_prompt=True,
-                tokenize=False,
-            )
-            for t in chunk
-        ]
+        prompts = []
+        for t in chunk:
+            msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": t}] if use_sys else [{"role": "user", "content": t}]
+            prompts.append(tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False))
         enc = tok(prompts, return_tensors="pt", padding=True).to(mdl.device)
         plen = enc["input_ids"].shape[1]
         with torch.no_grad():
@@ -67,27 +64,91 @@ def parse(s):
         return None
 
 
+def norm_cat(v):
+    if not isinstance(v, str):
+        return v
+    vl = v.lower()
+    if "hvac" in vl or "climate" in vl:
+        return "HVAC / Climate Control"
+    if "plumb" in vl or "water" in vl:
+        return "Plumbing"
+    if "electr" in vl:
+        return "Electrical"
+    if "safe" in vl or "secur" in vl or "gas" in vl:
+        return "Safety & Security"
+    if "general" in vl or "maint" in vl:
+        return "General Maintenance"
+    return v
+
+
+def norm_spec(v):
+    if not isinstance(v, str):
+        return v
+    vl = v.lower()
+    if "remediation" in vl or "restoration" in vl:
+        return "24/7 Water & Fire Remediation"
+    if "plumb" in vl:
+        return "Licensed Master Plumber"
+    if "electr" in vl:
+        return "Certified Master Electrician"
+    if "hvac" in vl:
+        return "EPA-Certified HVAC Technician"
+    if "handyman" in vl:
+        return "Licensed General Handyman"
+    return v
+
+
+def norm_sev(v):
+    if not isinstance(v, str):
+        return v
+    for k in ["P1", "P2", "P3", "P4"]:
+        if k in v.upper():
+            return {"P1": "P1_CRITICAL", "P2": "P2_HIGH", "P3": "P3_MEDIUM", "P4": "P4_LOW"}[k]
+    return v
+
+
+def norm_pred(p):
+    if not p:
+        return None
+    q = dict(p)
+    if "category" in q:
+        q["category"] = norm_cat(q["category"])
+    if "specialty" in q:
+        q["specialty"] = norm_spec(q["specialty"])
+    if "severity" in q:
+        q["severity"] = norm_sev(q["severity"])
+    return q
+
+
 def score(preds, rows):
     n = len(rows)
     valid = sum(p is not None for p in preds)
-    acc = {}
-    for f in FIELDS:
-        acc[f] = round(100 * sum(bool(p is not None and p.get(f) == r["gold"][f]) for p, r in zip(preds, rows)) / n, 1)
+    npreds = [norm_pred(p) for p in preds]
+    exact = {f: round(100 * sum(bool(p is not None and p.get(f) == r["gold"][f]) for p, r in zip(preds, rows)) / n, 1) for f in FIELDS}
+    norm = {f: round(100 * sum(bool(p is not None and p.get(f) == r["gold"][f]) for p, r in zip(npreds, rows)) / n, 1) for f in FIELDS}
     tp = sum(bool(p is not None and p.get("hazard_detected") and r["gold"]["hazard_detected"]) for p, r in zip(preds, rows))
     pos = sum(bool(r["gold"]["hazard_detected"]) for r in rows)
-    return {"n": n, "valid_json_pct": round(100 * valid / n, 1), "field_accuracy_pct": acc, "hazard_recall_pct": round(100 * tp / max(1, pos), 1)}
+    return {
+        "n": n,
+        "valid_json_pct": round(100 * valid / n, 1),
+        "exact_field_accuracy_pct": exact,
+        "normalized_field_accuracy_pct": norm,
+        "hazard_recall_pct": round(100 * tp / max(1, pos), 1),
+    }
 
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else None
     rows = [json.loads(l) for l in (DIR / "test_tickets.jsonl").read_text(encoding="utf-8").splitlines()]
     tok, mdl = load(path)
-    raw = gen_batch(tok, mdl, [r["description"] for r in rows])
+    use_sys = not (path and "distill" in str(path).lower())
+    raw = gen_batch(tok, mdl, [r["description"] for r in rows], use_sys=use_sys)
     preds = [parse(x) for x in raw]
-    out_map = {r["id"]: x for r, x in zip(rows, raw)}
-    idx = {r["description"]: r["id"] for r in rows}
-    samples = [ak.Sample(id=r["id"], input=r["description"], target=gold_final_json(r["gold"])) for r in rows]
-    res = ak.evaluate(samples, lambda p: [out_map[idx[x]] for x in p], ["exact_match", "f1_score"])
+    samples = [
+        ak.Sample(id=r["id"], input=r["description"], target=gold_final_json(r["gold"]), actual_output=x)
+        for r, x in zip(rows, raw)
+    ]
+    res = ak.evaluate(samples, "precomputed", ["exact_match", "f1_score"])
     name = (Path(path).name if path else "base") + "_report.json"
     out = {
         "model": path or BASE,
@@ -95,6 +156,13 @@ def main():
         "auditkit": {"headline": res.headline, "fingerprint": res.fingerprint},
         "sample_outputs": raw[:3],
     }
+    if path and (Path(path) / "trajectories.jsonl").exists():
+        eps = episodes_from_agenttune(str(path))
+        out["agenttune_rollouts"] = {
+            "episodes": len(eps),
+            "total_tool_calls": sum(ep.counters.get("n_tool_calls", 0) for ep in eps),
+            "has_provenance": bool(eps and eps[0].metadata.get("provenance")),
+        }
     (DIR / name).write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(json.dumps(out, indent=2))
 
