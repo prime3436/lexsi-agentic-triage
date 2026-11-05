@@ -48,3 +48,4 @@ stages:
     verdict_field: "classify.output.severity"
     next_stage_field: "classify.output.specialty"
     destinations: [file]
+

@@ -9,19 +9,28 @@ Colab: https://colab.research.google.com/github/prime3436/lexsi-agentic-triage/b
 ```bash
 python generate_dataset.py
 python eval_baseline.py
-python run_auditkit_eval.py
 ```
 
-## Results (74 test tickets, AuditKIT 1.1.3)
+On a GPU, after training in the notebook:
 
-| Metric | Baseline | AgentTune |
-| :--- | :---: | :---: |
-| Verified Outcome Exact Match | 29.7% | 100.0% |
-| Output Token F1 | 84.0% | 98.7% |
-| Tool-Call F1 | 85.8% | 100.0% |
-| Tool-Call Exact | 71.6% | 100.0% |
-| Trajectory Strict | 71.6% | 100.0% |
-| Category Accuracy | 89.2% | 100.0% |
-| Severity Accuracy | 74.3% | 100.0% |
-| Hazard Recall | 73.3% | 100.0% |
-| Fingerprint | `94ede01318bd1cea` | `06b8773cb8cc8739` |
+```bash
+python eval_trained.py
+python eval_trained.py ./output/distilled
+python eval_trained.py ./output/grpo
+```
+
+`eval_trained.py` with no argument scores the untuned base model, and with a path scores the tuned adapter. Both write a JSON report to `data/`.
+
+## Baseline (74 held-out test tickets)
+
+| Metric | Rule + TF-IDF |
+| :--- | :---: |
+| Category | 89.2% |
+| Severity | 74.3% |
+| Specialty | 87.8% |
+| SLA hours | 74.3% |
+| Hazard recall | 73.3% |
+
+Tuned-model numbers go in `data/trained_report.json` after the run.
+
+`run_auditkit_eval.py` scores recorded gold trajectories against the rule baseline. It validates the AuditKIT wiring and is not a result for the trained model.

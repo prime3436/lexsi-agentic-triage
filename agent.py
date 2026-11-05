@@ -73,3 +73,4 @@ class TriageBaseline:
             "min_cost_inr": lo,
             "max_cost_inr": hi,
         }
+
