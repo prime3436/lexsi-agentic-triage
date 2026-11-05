@@ -13,25 +13,36 @@ BASE = "Qwen/Qwen2.5-1.5B-Instruct"
 FIELDS = ["category", "severity", "hazard_detected", "sla_hours", "specialty"]
 
 
+def find(root, name):
+    hits = sorted(Path(root).rglob(name))
+    return hits[0].parent if hits else None
+
+
 def load(path):
     tok = AutoTokenizer.from_pretrained(BASE)
-    mdl = AutoModelForCausalLM.from_pretrained(BASE, torch_dtype=torch.float16, device_map="auto")
-    if path and (Path(path) / "adapter_config.json").exists():
-        from peft import PeftModel
-        mdl = PeftModel.from_pretrained(mdl, path)
-    elif path:
-        mdl = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.float16, device_map="auto")
-        tok = AutoTokenizer.from_pretrained(path)
+    mdl = AutoModelForCausalLM.from_pretrained(BASE, dtype=torch.float16, device_map={"": 0})
+    if path:
+        ad = find(path, "adapter_config.json")
+        full = find(path, "config.json")
+        if ad is not None:
+            from peft import PeftModel
+            mdl = PeftModel.from_pretrained(mdl, str(ad))
+        elif full is not None and "model_type" in json.loads((full / "config.json").read_text()):
+            mdl = AutoModelForCausalLM.from_pretrained(str(full), dtype=torch.float16, device_map={"": 0})
+        else:
+            files = sorted(str(p.relative_to(path)) for p in Path(path).rglob("*") if p.is_file())
+            raise SystemExit(f"no adapter or model in {path}; found: {files[:40]}")
     mdl.eval()
     return tok, mdl
 
 
 def gen(tok, mdl, text):
     msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": text}]
-    ids = tok.apply_chat_template(msgs, add_generation_prompt=True, return_tensors="pt").to(mdl.device)
+    prompt = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+    enc = tok(prompt, return_tensors="pt").to(mdl.device)
     with torch.no_grad():
-        out = mdl.generate(ids, max_new_tokens=160, do_sample=False)
-    return tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
+        out = mdl.generate(**enc, max_new_tokens=160, do_sample=False)
+    return tok.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True).strip()
 
 
 def parse(s):
@@ -63,12 +74,13 @@ def main():
     idx = {r["description"]: r["id"] for r in rows}
     samples = [ak.Sample(id=r["id"], input=r["description"], target=gold_final_json(r["gold"])) for r in rows]
     res = ak.evaluate(samples, lambda p: [out_map[idx[x]] for x in p], ["exact_match", "f1_score"])
+    name = (Path(path).name if path else "base") + "_report.json"
     out = {
         "model": path or BASE,
         "scores": score(preds, rows),
         "auditkit": {"headline": res.headline, "fingerprint": res.fingerprint},
+        "sample_outputs": raw[:3],
     }
-    name = "trained_report.json" if path else "base_report.json"
     (DIR / name).write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(json.dumps(out, indent=2))
 
