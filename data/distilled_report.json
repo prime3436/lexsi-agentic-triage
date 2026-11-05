@@ -1,0 +1,34 @@
+{
+  "model": "./output/distilled",
+  "scores": {
+    "n": 74,
+    "valid_json_pct": 100.0,
+    "exact_field_accuracy_pct": {
+      "category": 98.6,
+      "severity": 74.3,
+      "hazard_detected": 97.3,
+      "sla_hours": 85.1,
+      "specialty": 100.0
+    },
+    "normalized_field_accuracy_pct": {
+      "category": 100.0,
+      "severity": 74.3,
+      "hazard_detected": 97.3,
+      "sla_hours": 85.1,
+      "specialty": 100.0
+    },
+    "hazard_recall_pct": 100.0
+  },
+  "auditkit": {
+    "headline": {
+      "exact_match": 0.6891891891891891,
+      "f1_score": 0.951472194119253
+    },
+    "fingerprint": "d03ce03fd3ceac0b"
+  },
+  "sample_outputs": [
+    "{\"category\": \"Electrical\", \"hazard_detected\": false, \"max_cost_inr\": 3000, \"min_cost_inr\": 800, \"severity\": \"P3_MEDIUM\", \"sla_hours\": 24, \"specialty\": \"Certified Master Electrician\"}",
+    "{\"category\": \"Safety & Security\", \"hazard_detected\": false, \"max_cost_inr\": 7500, \"min_cost_inr\": 2800, \"severity\": \"P3_MEDIUM\", \"sla_hours\": 6, \"specialty\": \"Licensed General Handyman\"}",
+    "{\"category\": \"Safety & Security\", \"hazard_detected\": true, \"max_cost_inr\": 9500, \"min_cost_inr\": 3500, \"severity\": \"P1_CRITICAL\", \"sla_hours\": 1, \"specialty\": \"Licensed General Handyman\"}"
+  ]
+}

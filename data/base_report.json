@@ -1,0 +1,29 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "scores": {
+    "n": 74,
+    "valid_json_pct": 29.7,
+    "exact_field_accuracy_pct": {
+      "category": 0.0,
+      "severity": 0.0,
+      "hazard_detected": 0.0,
+      "sla_hours": 0.0,
+      "specialty": 0.0
+    },
+    "normalized_field_accuracy_pct": {
+      "category": 0.0,
+      "severity": 0.0,
+      "hazard_detected": 0.0,
+      "sla_hours": 0.0,
+      "specialty": 0.0
+    },
+    "hazard_recall_pct": 0.0
+  },
+  "auditkit": {
+    "headline": {
+      "exact_match": 0.0,
+      "f1_score": 0.023751418113712564
+    },
+    "fingerprint": "683077555bd22ec3"
+  }
+}
