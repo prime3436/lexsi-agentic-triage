@@ -19,8 +19,12 @@ def find(root, name):
 
 
 def load(path):
-    tok = AutoTokenizer.from_pretrained(BASE)
-    mdl = AutoModelForCausalLM.from_pretrained(BASE, dtype=torch.float16, device_map={"": 0})
+    tok = AutoTokenizer.from_pretrained(BASE, padding_side="left")
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    dev = "cuda:0" if torch.cuda.is_available() and torch.cuda.mem_get_info()[0] > 4 * 1024**3 else "cpu"
+    dt = torch.float16 if dev.startswith("cuda") else torch.float32
+    mdl = AutoModelForCausalLM.from_pretrained(BASE, dtype=dt).to(dev)
     if path:
         ad = find(path, "adapter_config.json")
         full = find(path, "config.json")
@@ -28,21 +32,30 @@ def load(path):
             from peft import PeftModel
             mdl = PeftModel.from_pretrained(mdl, str(ad))
         elif full is not None and "model_type" in json.loads((full / "config.json").read_text()):
-            mdl = AutoModelForCausalLM.from_pretrained(str(full), dtype=torch.float16, device_map={"": 0})
-        else:
-            files = sorted(str(p.relative_to(path)) for p in Path(path).rglob("*") if p.is_file())
-            raise SystemExit(f"no adapter or model in {path}; found: {files[:40]}")
+            mdl = AutoModelForCausalLM.from_pretrained(str(full), dtype=dt).to(dev)
     mdl.eval()
     return tok, mdl
 
 
-def gen(tok, mdl, text):
-    msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": text}]
-    prompt = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
-    enc = tok(prompt, return_tensors="pt").to(mdl.device)
-    with torch.no_grad():
-        out = mdl.generate(**enc, max_new_tokens=160, do_sample=False)
-    return tok.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+def gen_batch(tok, mdl, texts, bs=16):
+    outs = []
+    for i in range(0, len(texts), bs):
+        chunk = texts[i : i + bs]
+        prompts = [
+            tok.apply_chat_template(
+                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": t}],
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+            for t in chunk
+        ]
+        enc = tok(prompts, return_tensors="pt", padding=True).to(mdl.device)
+        plen = enc["input_ids"].shape[1]
+        with torch.no_grad():
+            gen = mdl.generate(**enc, max_new_tokens=140, do_sample=False, pad_token_id=tok.pad_token_id)
+        for row in gen:
+            outs.append(tok.decode(row[plen:], skip_special_tokens=True).strip())
+    return outs
 
 
 def parse(s):
@@ -68,7 +81,7 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else None
     rows = [json.loads(l) for l in (DIR / "test_tickets.jsonl").read_text(encoding="utf-8").splitlines()]
     tok, mdl = load(path)
-    raw = [gen(tok, mdl, r["description"]) for r in rows]
+    raw = gen_batch(tok, mdl, [r["description"] for r in rows])
     preds = [parse(x) for x in raw]
     out_map = {r["id"]: x for r, x in zip(rows, raw)}
     idx = {r["description"]: r["id"] for r in rows}
