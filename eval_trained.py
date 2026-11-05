@@ -61,7 +61,8 @@ def gen_batch(tok, mdl, texts, bs=16):
 def parse(s):
     try:
         a, b = s.index("{"), s.rindex("}") + 1
-        return json.loads(s[a:b])
+        obj = json.loads(s[a:b])
+        return obj if isinstance(obj, dict) else None
     except Exception:
         return None
 
@@ -71,9 +72,9 @@ def score(preds, rows):
     valid = sum(p is not None for p in preds)
     acc = {}
     for f in FIELDS:
-        acc[f] = round(100 * sum(p is not None and p.get(f) == r["gold"][f] for p, r in zip(preds, rows)) / n, 1)
-    tp = sum(p is not None and p.get("hazard_detected") and r["gold"]["hazard_detected"] for p, r in zip(preds, rows))
-    pos = sum(r["gold"]["hazard_detected"] for r in rows)
+        acc[f] = round(100 * sum(bool(p is not None and p.get(f) == r["gold"][f]) for p, r in zip(preds, rows)) / n, 1)
+    tp = sum(bool(p is not None and p.get("hazard_detected") and r["gold"]["hazard_detected"]) for p, r in zip(preds, rows))
+    pos = sum(bool(r["gold"]["hazard_detected"]) for r in rows)
     return {"n": n, "valid_json_pct": round(100 * valid / n, 1), "field_accuracy_pct": acc, "hazard_recall_pct": round(100 * tp / max(1, pos), 1)}
 
 
