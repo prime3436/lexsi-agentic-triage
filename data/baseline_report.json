@@ -1,0 +1,10 @@
+{
+  "n_test": 74,
+  "category_accuracy": 89.2,
+  "severity_accuracy": 74.3,
+  "specialty_accuracy": 87.8,
+  "sla_accuracy": 74.3,
+  "hazard_recall": 73.3,
+  "hazard_false_positives": 0,
+  "avg_latency_ms": 3.75
+}

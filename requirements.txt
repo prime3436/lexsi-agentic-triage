@@ -1,0 +1,3 @@
+numpy
+scikit-learn
+auditkit @ git+https://github.com/Lexsi-Labs/AuditKIT.git
